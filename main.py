@@ -21,14 +21,17 @@ from numpy.random import seed
 import shap
 
 
+
 class MultiInputSingleOutputModel(L.LightningModule):
     def __init__(self):
         super().__init__()
+        self.training_losses = []
+        self.validation_losses = []
         self.linear1 = nn.Linear(14, 32)
-        self.dropout1 = nn.Dropout(0.1)
+        self.dropout1 = nn.Dropout(0.15)
 
         self.linear2 = nn.Linear(32, 16)
-        self.dropout2 = nn.Dropout(0.1)
+        self.dropout2 = nn.Dropout(0.15)
 
         self.linear3 = nn.Linear(16, 1)
         self.loss = nn.MSELoss()
@@ -42,13 +45,14 @@ class MultiInputSingleOutputModel(L.LightningModule):
         return x
 
     def configure_optimizers(self):
-        optimizer = Adam(self.parameters(), lr=0.005)  # Slightly higher learning rate
+        optimizer = Adam(self.parameters(), lr=0.005) # Slightly higher learning rate
         return optimizer
 
     def training_step(self, batch, batch_idx):
         inputs, labels = batch
         outputs = self.forward(inputs)
         loss = self.loss(outputs, labels)
+        self.training_losses.append(loss.item())
         # self.log('train_loss', loss)
         return loss
 
@@ -63,6 +67,7 @@ class MultiInputSingleOutputModel(L.LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = self.loss(y_hat, y)
+        self.validation_losses.append(loss.item())
         self.log('val_loss', loss, prog_bar=false)  # this must match monitor='val_loss'
         return loss
 
@@ -92,6 +97,7 @@ def factorize_columns(df: pd.DataFrame):
 
 
 df = pd.read_csv('./data/student_habits_performance.csv', na_values=[''], keep_default_na=False)
+L.seed_everything(6) #44 is good 6 is better
 
 categorical_columns = ['gender', 'part_time_job', 'diet_quality', 'parental_education_level', 'internet_quality', 'extracurricular_participation', 'exercise_frequency']
 continuous_features = ['age', 'study_hours_per_day', 'social_media_hours', 'netflix_hours',
@@ -137,16 +143,16 @@ test_dataset = TensorDataset(input_test_tensors, label_test_tensors) #same as ab
 test_dataloader = DataLoader(test_dataset, batch_size=16)
 
 validation_dataset = TensorDataset(input_val_tensors, label_val_tensors)
-validation_dataloader = DataLoader(validation_dataset, batch_size=16)
+validation_dataloader = DataLoader(validation_dataset, batch_size=8)
 
 
 model = MultiInputSingleOutputModel()
 
 early_stop = EarlyStopping(
     monitor="val_loss",
-    patience=8,
+    patience=10,
     mode="min",
-    min_delta=1e-5
+    min_delta=1e-4
 )
 
 trainer = L.Trainer(max_epochs=100, callbacks=[early_stop], gradient_clip_val=0.5) #TODO change back to 100 AND REMOVE DEBUGGER
@@ -165,4 +171,31 @@ shap_explanation = Explanation(explanation,
                              data=input_train_tensors.numpy())  # Add the background data
 shap.plots.beeswarm(shap_explanation,
                     max_display=14,  # Show all features
-                    plot_size=(12,8))
+                    plot_size=(12,8),
+                    show=False)
+plt.subplots_adjust(left=0.25)  # Increase left margin for labels
+plt.show()
+
+plt.figure(figsize=(10, 6))
+plt.plot(model.training_losses, label='Training Loss')
+plt.plot(model.validation_losses, label='Validation Loss')
+plt.xlabel('Batch')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss Over Time')
+plt.legend()
+plt.show()
+
+model.eval()
+with torch.no_grad():
+    predictions = model(input_test_tensors).numpy()
+
+plt.figure(figsize=(10, 6))
+plt.scatter(label_test_tensors.numpy(), predictions, alpha=0.5)
+plt.plot([label_test_tensors.min(), label_test_tensors.max()],
+         [label_test_tensors.min(), label_test_tensors.max()],
+         'r--', lw=2)
+plt.xlabel('Actual Exam Scores')
+plt.ylabel('Predicted Exam Scores')
+plt.title('Actual vs Predicted Exam Scores')
+plt.show()
+
