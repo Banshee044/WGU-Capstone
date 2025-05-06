@@ -68,7 +68,7 @@ class MultiInputSingleOutputModel(L.LightningModule):
         y_hat = self(x)
         loss = self.loss(y_hat, y)
         self.validation_losses.append(loss.item())
-        self.log('val_loss', loss, prog_bar=false)  # this must match monitor='val_loss'
+        self.log('val_loss', loss, prog_bar=True)  # this must match monitor='val_loss'
         return loss
 
 
@@ -90,9 +90,10 @@ def print_all_tabulated_columns(df: pd.DataFrame):
         tabulate_column_uniques(input_values[column])
 
 def factorize_columns(df: pd.DataFrame):
+    df_copy = df.copy()
     for column in ['gender', 'part_time_job', 'diet_quality', 'parental_education_level', 'internet_quality', 'extracurricular_participation']:
-        df[column] = df[column].factorize()[0].astype('float32')
-    return df
+        df_copy[column] = df_copy[column].factorize()[0].astype('float32')
+    return df_copy
 
 
 
@@ -155,7 +156,7 @@ early_stop = EarlyStopping(
     min_delta=1e-4
 )
 
-trainer = L.Trainer(max_epochs=100, callbacks=[early_stop], gradient_clip_val=0.5) #TODO change back to 100 AND REMOVE DEBUGGER
+trainer = L.Trainer(max_epochs=100, callbacks=[early_stop], gradient_clip_val=0.5, enable_progress_bar=False) #TODO change back to 100 AND REMOVE DEBUGGER
 trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=validation_dataloader)
 
 trainer.test(model, dataloaders=test_dataloader)
@@ -198,4 +199,3 @@ plt.xlabel('Actual Exam Scores')
 plt.ylabel('Predicted Exam Scores')
 plt.title('Actual vs Predicted Exam Scores')
 plt.show()
-
