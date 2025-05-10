@@ -3,11 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from shap import Explanation
-from sympy import false
 from torch.optim import Adam
-import numpy as np
+import warnings
+import math
 
 from sklearn.preprocessing import StandardScaler
+import ipywidgets as widgets
+from IPython.display import display
 
 from tabulate import tabulate
 
@@ -17,9 +19,16 @@ from torch.utils.data import TensorDataset, DataLoader
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from numpy.random import seed
 import shap
 
+
+CATEGORICAL_FEATURES = ['gender', 'part_time_job', 'diet_quality', 'parental_education_level', 'internet_quality', 'extracurricular_participation', 'exercise_frequency']
+CONTINUOUS_FEATURES = ['age', 'study_hours_per_day', 'social_media_hours', 'netflix_hours',
+                       'attendance_percentage', 'sleep_hours', 'mental_health_rating']
+
+warnings.filterwarnings("ignore", message="The '.*_dataloader' does not have many workers.*")
+warnings.filterwarnings("ignore", message="The number of training batches.*log_every_n_steps.*")
+warnings.filterwarnings("ignore", message="Using default `ModelCheckpoint`. Consider installing `litmodels` package to enable `LitModelCheckpoint` for automatic upload to the Lightning model registry.")
 
 
 class MultiInputSingleOutputModel(L.LightningModule):
@@ -95,14 +104,64 @@ def factorize_columns(df: pd.DataFrame):
         df_copy[column] = df_copy[column].factorize()[0].astype('float32')
     return df_copy
 
+def initialize_sliders():
+    sliders = {
+        'age': widgets.IntSlider(description='Age', min=17, max=24, value=20),
+        'gender': widgets.Dropdown(description='Gender', options=['Male', 'Female', 'Other'], value='Male'),
+        'study_hours_per_day': widgets.FloatSlider(description='Study Hours', min=0, max=8.3, step=0.1, value=2.5),
+        'social_media_hours': widgets.FloatSlider(description='Social Media Hours', min=0, max=6.2, step=0.1, value=0.0),
+        'netflix_hours': widgets.FloatSlider(description='Netflix Hours', min=0, max=5.5, step=0.1, value=0.0),
+        'part_time_job': widgets.Dropdown(description='Part-time Job', options=['Yes', 'No'], value='No'),
+        'attendance_percentage': widgets.FloatSlider(description='Attendance Percentage', min=56, max=100, step=0.1, value=84.0),
+        'sleep_hours': widgets.FloatSlider(description='Sleep Hours', min=3.5, max=10, step=0.5, value=7.0),
+        'diet_quality': widgets.Dropdown(description='Diet Quality', options=['Poor', 'Fair', 'Good'], value='Fair'),
+        'exercise_frequency': widgets.IntSlider(description='Exercise Frequency', min=0, max=7, step=1, value=0),
+        'parental_education_level': widgets.Dropdown(description='Parental Education Level', options=['None', 'High School', 'Bachelor', 'Master'], value='None'),
+        'internet_quality': widgets.Dropdown(description='Internet Quality', options=['Poor', 'Average', 'Good'], value='Average'),
+        'mental_health_rating': widgets.IntSlider(description='Mental Health Rating', min=1, max=10, step=1, value=5),
+        'extracurricular_participation': widgets.Dropdown(description='Extracurricular Participation', options=['Yes', 'No'], value='No')
+    }
+
+    predict_button = widgets.Button(description='Predict Exam Score')
+    output = widgets.Output()
+
+    def on_button_click(b):
+        with output:
+            output.clear_output()
+            # Gather all values into a dictionary
+            values = {name: widget.value for name, widget in sliders.items()}
+
+            # Convert to DataFrame
+            input_df = pd.DataFrame([values])
+
+            # Apply the same preprocessing as training data
+            X = factorize_columns(input_df)
+            X[CONTINUOUS_FEATURES] = scaler.transform(X[CONTINUOUS_FEATURES])
+
+            # Convert to tensor and get prediction
+            input_tensor = torch.tensor(X.values, dtype=torch.float32)
+
+            model.eval()
+            with torch.no_grad():
+                prediction = model(input_tensor)
+                clamped_prediction = prediction.clamp(min=0.0, max=100.0)
+                print(f"Predicted Exam Score: {clamped_prediction.item():.2f}")
+
+    predict_button.on_click(on_button_click)
+
+    for widget in sliders.values():
+        display(widget)
+    display(predict_button)
+    display(output)
+
+    return sliders
 
 
 df = pd.read_csv('./data/student_habits_performance.csv', na_values=[''], keep_default_na=False)
-L.seed_everything(6) #44 is good 6 is better
+L.seed_everything(6)
 
-categorical_columns = ['gender', 'part_time_job', 'diet_quality', 'parental_education_level', 'internet_quality', 'extracurricular_participation', 'exercise_frequency']
-continuous_features = ['age', 'study_hours_per_day', 'social_media_hours', 'netflix_hours',
-                       'attendance_percentage', 'sleep_hours', 'mental_health_rating']
+
+
 
 input_values = df[['age', 'gender', 'study_hours_per_day', 'social_media_hours', 'netflix_hours', 'part_time_job', 'attendance_percentage',
                    'sleep_hours', 'diet_quality','exercise_frequency', 'parental_education_level', 'internet_quality',
@@ -111,18 +170,13 @@ input_values = df[['age', 'gender', 'study_hours_per_day', 'social_media_hours',
 label_values = df['exam_score'] #observed values
 
 
-# print_all_tabulated_columns(input_values) TODO reactivate somehow later
-
 # ----- Changing categorical columns to numerical values -----
-input_values = factorize_columns(input_values)
-X = input_values
+X = factorize_columns(input_values)
 scaler = StandardScaler()
 X_scaled = X.copy()
-X_scaled[continuous_features] = scaler.fit_transform(X[continuous_features])
+X_scaled[CONTINUOUS_FEATURES] = scaler.fit_transform(X[CONTINUOUS_FEATURES])
 scaled_input = pd.DataFrame(X_scaled, columns=input_values.columns)
 
-# print(tabulate(input_values.head(), headers='keys', tablefmt='psql'))
-# print(tabulate(scaled_input.head(), headers='keys', tablefmt='psql'))
 
 input_train, input_test, label_train, label_test = train_test_split(scaled_input, label_values, test_size=0.25) #splitting the data into train and test sets
 input_train, input_val, label_train, label_val = train_test_split(input_train, label_train, test_size=0.1)
@@ -130,12 +184,10 @@ input_train, input_val, label_train, label_val = train_test_split(input_train, l
 input_train_tensors = torch.tensor(input_train.values, dtype=torch.float32) #Converting input train data into tensors. We use .values since torch.tensor() doesn't like DataFrames
 input_test_tensors = torch.tensor(input_test.values, dtype=torch.float32) #converting input test data into tensors
 input_val_tensors = torch.tensor(input_val.values, dtype=torch.float32) #converting input validation data into tensors
+
 label_train_tensors = torch.tensor(label_train.values, dtype=torch.float32).view(-1, 1)
 label_test_tensors = torch.tensor(label_test.values, dtype=torch.float32).view(-1, 1)
 label_val_tensors = torch.tensor(label_val.values, dtype=torch.float32).view(-1, 1)
-
-
-
 
 train_dataset = TensorDataset(input_train_tensors, label_train_tensors) #converting input train data and labels into a dataset
 train_dataloader = DataLoader(train_dataset, batch_size=16) #we convert to a DataLoader to make it easier to iterate over batches
@@ -156,10 +208,13 @@ early_stop = EarlyStopping(
     min_delta=1e-4
 )
 
-trainer = L.Trainer(max_epochs=100, callbacks=[early_stop], gradient_clip_val=0.5, enable_progress_bar=False) #TODO change back to 100 AND REMOVE DEBUGGER
+trainer = L.Trainer(max_epochs=100, callbacks=[early_stop], gradient_clip_val=0.5, enable_progress_bar=False)
 trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=validation_dataloader)
 
-trainer.test(model, dataloaders=test_dataloader)
+test_results = trainer.test(model, dataloaders=test_dataloader)
+test_loss = math.sqrt(test_results[0]['test_loss'])
+
+print(f"Test Loss: {test_loss:.2f}")
 
 
 explainer = shap.DeepExplainer(model, input_train_tensors)
@@ -199,3 +254,5 @@ plt.xlabel('Actual Exam Scores')
 plt.ylabel('Predicted Exam Scores')
 plt.title('Actual vs Predicted Exam Scores')
 plt.show()
+
+sliders = initialize_sliders()
